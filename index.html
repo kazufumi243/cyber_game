@@ -1,11 +1,979 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>公開テスト</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Term: Penetration Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Share+Tech+Mono&display=swap');
+        
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Fira Code', monospace;
+            overflow: hidden;
+        }
+        
+        .scanline {
+            width: 100%;
+            height: 100px;
+            z-index: 10;
+            background: linear-gradient(0deg, rgba(0,0,0,0) 0%, rgba(51, 255, 0, 0.02) 50%, rgba(0,0,0,0) 100%);
+            opacity: 0.1;
+            position: absolute;
+            bottom: 100%;
+            animation: scanline 10s linear infinite;
+            pointer-events: none;
+        }
+        @keyframes scanline {
+            0% { bottom: 100%; }
+            100% { bottom: -100px; }
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+            pointer-events: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(18, 16, 16, 0.02);
+            z-index: 20;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0d1117; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #238636; 
+        }
+
+        .typing-cursor::after {
+            content: '█';
+            animation: blink 1s step-start infinite;
+            margin-left: 2px;
+            color: #2ea043;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+        
+        .msf-prompt { color: #d92424; font-weight: bold; text-decoration: underline; }
+
+        /* Selection Color */
+        ::selection {
+            background: rgba(35, 134, 54, 0.5);
+            color: white;
+        }
+    </style>
 </head>
 <body>
-  <h1>🎮 表示できました！</h1>
-  <p>GitHub + Vercel 成功です</p>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useLayoutEffect } = React;
+
+        // --- Icon Components ---
+        const Shield = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+        );
+
+        const Activity = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+        );
+
+        const Globe = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+        );
+
+        const Server = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                <line x1="6" y1="6" x2="6.01" y2="6" />
+                <line x1="6" y1="18" x2="6.01" y2="18" />
+            </svg>
+        );
+        
+        const Lightbulb = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18h6" />
+                <path d="M10 22h4" />
+                <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5 2 9h10c0-4 2-6 2-9a7 7 0 0 0-7-7z" />
+            </svg>
+        );
+
+        // --- 仮想データ構造 ---
+        const INITIAL_FILE_SYSTEM = {
+            "local": {
+                "home": {
+                    "guest": {
+                        "notes.txt": "Targets:\nL1: 192.168.1.20\nL2: 192.168.1.35\nL3: 192.168.1.50\nL4: 192.168.1.65\nL5: 192.168.1.80\nL6: 192.168.1.95\nL7: 192.168.1.110",
+                        "rockyou.txt": "password\n123456\nqwerty\nadmin123\nletmein\nsecret\naccess" 
+                    }
+                }
+            },
+            "192.168.1.20": { // Level 1
+                "root": {
+                    "secret_config.txt": "FLAG{SECURITY_IS_NOT_OBSCURITY}",
+                    "syslog.log": "User admin failed login attempt..."
+                }
+            },
+            "192.168.1.35": { // Level 2
+                "C:": {
+                    "Users": {
+                        "Administrator": {
+                            "Desktop": {
+                                "confidential.docx": "FLAG{METASPLOIT_MASTER_EXPLOITER}",
+                                "passwords.txt": "admin:P@ssw0rd123!"
+                            }
+                        }
+                    }
+                }
+            },
+            "192.168.1.50": { // Level 3
+                "root": {
+                    "flag.txt": "FLAG{VSFTPD_BACKDOOR_PWNED}",
+                    "server.conf": "port=21\nanonymous_enable=NO"
+                }
+            },
+            "192.168.1.65": { // Level 4
+                "opt": {
+                    "tomcat": {
+                        "webapps": {
+                            "ROOT": {
+                                "database.xml": "FLAG{APACHE_STRUTS_RCE_VICTORY}",
+                                "app.config": "db_user=root; db_pass=s3cr3t"
+                            }
+                        }
+                    }
+                }
+            },
+            "192.168.1.80": { // Level 5 (Shellshock)
+                "usr": {
+                    "lib": {
+                        "cgi-bin": {
+                            "vulnerable.cgi": "#!/bin/bash\necho 'Content-type: text/html'\necho ''\necho 'Hello World'",
+                            "secret_token": "FLAG{SHELLSHOCK_ENV_INJECTION_SUCCESS}"
+                        }
+                    }
+                }
+            },
+            "192.168.1.95": { // Level 6 (Drupalgeddon)
+                "var": {
+                    "www": {
+                        "html": {
+                            "sites": {
+                                "default": {
+                                    "settings.php": "FLAG{DRUPAL_SQL_INJECTION_PWNAGE}"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "192.168.1.110": { // Level 7 (Log4Shell - High Difficulty)
+                "app": {
+                    "logs": {
+                        "server.log": "INFO: User login attempt...",
+                        "env.properties": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nFLAG{LOG4SHELL_JNDI_RCE_ULTIMATE}"
+                    }
+                }
+            }
+        };
+
+        const VIRTUAL_NETWORK = {
+            "192.168.1.20": {
+                hostname: "corp-server-01",
+                os: "Linux Kernel 5.4",
+                level: 1,
+                ports: [
+                    { port: 22, service: "ssh", state: "open", version: "OpenSSH 8.2p1" },
+                    { port: 80, service: "http", state: "open", version: "Apache httpd 2.4.41" }
+                ],
+                users: { "admin": "admin123" }
+            },
+            "192.168.1.35": {
+                hostname: "legacy-win-srv",
+                os: "Windows Server 2012 R2",
+                level: 2,
+                ports: [
+                    { port: 135, service: "msrpc", state: "open", version: "Microsoft Windows RPC" },
+                    { port: 139, service: "netbios-ssn", state: "open", version: "Microsoft Windows netbios-ssn" },
+                    { port: 445, service: "microsoft-ds", state: "open", version: "Windows Server 2012 R2 Standard 9600" }
+                ],
+                vulnerabilities: ["ms17-010"]
+            },
+            "192.168.1.50": {
+                hostname: "backup-ftp-srv",
+                os: "Metasploitable 2 (Linux)",
+                level: 3,
+                ports: [
+                    { port: 21, service: "ftp", state: "open", version: "vsftpd 2.3.4" },
+                    { port: 80, service: "http", state: "open", version: "Apache httpd" }
+                ],
+                vulnerabilities: ["vsftpd_234_backdoor"]
+            },
+            "192.168.1.65": {
+                hostname: "web-app-srv04",
+                os: "Linux (Ubuntu)",
+                level: 4,
+                ports: [
+                    { port: 22, service: "ssh", state: "filtered", version: "OpenSSH" },
+                    { port: 8080, service: "http-alt", state: "open", version: "Apache Tomcat/Coyote JSP engine 1.1 (Struts 2)" }
+                ],
+                vulnerabilities: ["struts2_content_type_ognl"]
+            },
+            "192.168.1.80": { // Level 5
+                hostname: "legacy-cgi-srv",
+                os: "Linux (Old Debian)",
+                level: 5,
+                ports: [
+                    { port: 80, service: "http", state: "open", version: "Apache httpd 2.2.22 (CGI enabled)" }
+                ],
+                vulnerabilities: ["apache_mod_cgi_bash_env_exec"]
+            },
+            "192.168.1.95": { // Level 6
+                hostname: "cms-server-v7",
+                os: "Linux (CentOS)",
+                level: 6,
+                ports: [
+                    { port: 80, service: "http", state: "open", version: "Apache/2.4.6 (CentOS) PHP/5.4.16" } // Drupal 7
+                ],
+                vulnerabilities: ["drupal_drupalgeddon2"]
+            },
+            "192.168.1.110": { // Level 7
+                hostname: "enterprise-java-app",
+                os: "Linux (Alpine)",
+                level: 7,
+                ports: [
+                    { port: 8080, service: "http-alt", state: "open", version: "Jetty/9.4.43" } // Running Vulnerable Java App
+                ],
+                vulnerabilities: ["log4shell_header_injection"]
+            }
+        };
+
+        const COMMANDS_HELP = {
+            bash: [
+                { cmd: "help", desc: "Show available commands" },
+                { cmd: "ls", desc: "List directory contents" },
+                { cmd: "cat <file>", desc: "Concatenate and display files" },
+                { cmd: "nmap <ip>", desc: "Network exploration" },
+                { cmd: "hydra", desc: "Login cracker (Level 1)" },
+                { cmd: "ssh", desc: "Remote login (Level 1)" },
+                { cmd: "msfconsole", desc: "Metasploit Framework (Level 2+)" },
+                { cmd: "solution", desc: "Show mission walkthrough" },
+                { cmd: "jump <level>", desc: "DEBUG: Skip to level (1-7)" }
+            ],
+            msf: [
+                { cmd: "help", desc: "Show Metasploit commands" },
+                { cmd: "search <term>", desc: "Search for modules" },
+                { cmd: "use <module>", desc: "Select a module" },
+                { cmd: "show options", desc: "Display options for current module" },
+                { cmd: "set <opt> <val>", desc: "Set a value for an option" },
+                { cmd: "exploit", desc: "Launch the attack" },
+                { cmd: "exit", desc: "Exit Metasploit" }
+            ]
+        };
+
+        const App = () => {
+            // Game State
+            const [level, setLevel] = useState(1); 
+            const [level1Cleared, setLevel1Cleared] = useState(false);
+            const [level2Cleared, setLevel2Cleared] = useState(false);
+            const [level3Cleared, setLevel3Cleared] = useState(false);
+            const [level4Cleared, setLevel4Cleared] = useState(false);
+            const [level5Cleared, setLevel5Cleared] = useState(false);
+            const [level6Cleared, setLevel6Cleared] = useState(false);
+            const [level7Cleared, setLevel7Cleared] = useState(false);
+            
+            // Hints State
+            const [activeHint, setActiveHint] = useState(null); 
+
+            // Terminal State
+            const [history, setHistory] = useState([
+                { type: 'system', content: "CyberTerm OS [Version 4.2.0]" },
+                { type: 'system', content: "(c) Security Training Simulator." },
+                { type: 'info', content: "Current Level: 1 (Beginner)" },
+                { type: 'info', content: "Type 'help' to see available commands." }
+            ]);
+            const [inputVal, setInputVal] = useState("");
+            const [cwd, setCwd] = useState("/home/guest");
+            const [user, setUser] = useState("guest");
+            const [host, setHost] = useState("localhost");
+            const [connectedIp, setConnectedIp] = useState(null); 
+            const [isProcessing, setIsProcessing] = useState(false);
+            
+            // Console Modes: 'bash', 'msf', 'meterpreter'
+            const [consoleMode, setConsoleMode] = useState('bash');
+            const [msfModule, setMsfModule] = useState(null); 
+            const [msfOptions, setMsfOptions] = useState({}); 
+
+            // Password & Auth State
+            const [passwordMode, setPasswordMode] = useState(false);
+            const [pendingAuth, setPendingAuth] = useState(null);
+
+            // Command History
+            const [cmdHistory, setCmdHistory] = useState([]);
+            const [historyIndex, setHistoryIndex] = useState(-1);
+            
+            const bottomRef = useRef(null);
+            const inputRef = useRef(null);
+            const containerRef = useRef(null);
+
+            useLayoutEffect(() => {
+                bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+            }, [history]);
+
+            // Prevent focus stealing if text is selected
+            const handleContainerClick = (e) => {
+                const selection = window.getSelection();
+                // If there is selected text, do NOT focus input, allow user to copy
+                if (selection && selection.toString().length > 0) {
+                    return;
+                }
+                // Otherwise focus input
+                inputRef.current?.focus();
+            };
+            
+            // Handle Context Menu (Right Click) for Auto Copy
+            const handleContextMenu = (e, text) => {
+                e.preventDefault();
+                // Select the text
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(e.currentTarget);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                // Copy to clipboard
+                navigator.clipboard.writeText(text).then(() => {
+                    // Focus input so Ctrl+V works immediately
+                    inputRef.current?.focus();
+                });
+            };
+
+            const addToHistory = (type, content) => {
+                setHistory(prev => [...prev, { type, content }]);
+            };
+
+            const simulateDelay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            // --- Handlers ---
+
+            const toggleHint = (lvl) => {
+                setActiveHint(activeHint === lvl ? null : lvl);
+            };
+
+            // Clear Handlers
+            const handleLevel1Clear = () => { if(!level1Cleared) { setLevel1Cleared(true); showClearMsg(1, "Metasploit Framework", "level2"); } };
+            const handleLevel2Clear = () => { if(!level2Cleared) { setLevel2Cleared(true); showClearMsg(2, "Advanced Course", "level3"); } };
+            const handleLevel3Clear = () => { if(!level3Cleared) { setLevel3Cleared(true); showClearMsg(3, "Expert Course", "level4"); } };
+            const handleLevel4Clear = () => { if(!level4Cleared) { setLevel4Cleared(true); showClearMsg(4, "Expert+ Course", "level5"); } };
+            const handleLevel5Clear = () => { if(!level5Cleared) { setLevel5Cleared(true); showClearMsg(5, "Master Course", "level6"); } };
+            const handleLevel6Clear = () => { if(!level6Cleared) { setLevel6Cleared(true); showClearMsg(6, "Grandmaster Course", "level7"); } };
+            const handleLevel7Clear = () => { if(!level7Cleared) { setLevel7Cleared(true); showClearMsg(7, "All Modules", null); } };
+
+            const showClearMsg = (lvl, unlock, nextCmd) => {
+                addToHistory('success', "------------------------------------------------");
+                addToHistory('success', `🎉 LEVEL ${lvl} COMPLETE!`);
+                if(nextCmd) addToHistory('success', `Next unlocked: ${unlock}. Type '${nextCmd}'.`);
+                else addToHistory('success', "🏆 YOU ARE A LEGEND! All levels cleared.");
+                addToHistory('success', "------------------------------------------------");
+            };
+
+            const startLevel = async (lvl, ip) => {
+                 setLevel(lvl);
+                 setConsoleMode('bash');
+                 setMsfModule(null);
+                 setConnectedIp(null); setUser("guest"); setHost("localhost"); setCwd("/home/guest");
+                 addToHistory('system', `Initializing Level ${lvl} Environment...`);
+                 await simulateDelay(1000);
+                 addToHistory('success', `Level ${lvl} Started. Target: ${ip}`);
+            };
+
+            const getFiles = () => {
+                if (consoleMode === 'meterpreter' && connectedIp) {
+                     if (connectedIp === "192.168.1.35") return INITIAL_FILE_SYSTEM[connectedIp]["C:"]["Users"]["Administrator"]["Desktop"];
+                     if (connectedIp === "192.168.1.65") return INITIAL_FILE_SYSTEM[connectedIp]["opt"]["tomcat"]["webapps"]["ROOT"];
+                     if (connectedIp === "192.168.1.80") return INITIAL_FILE_SYSTEM[connectedIp]["usr"]["lib"]["cgi-bin"];
+                     if (connectedIp === "192.168.1.95") return INITIAL_FILE_SYSTEM[connectedIp]["var"]["www"]["html"]["sites"]["default"];
+                     if (connectedIp === "192.168.1.110") return INITIAL_FILE_SYSTEM[connectedIp]["app"]["logs"];
+                     return INITIAL_FILE_SYSTEM[connectedIp].root;
+                }
+                if (connectedIp) return INITIAL_FILE_SYSTEM[connectedIp].root;
+                return INITIAL_FILE_SYSTEM.local.home.guest;
+            };
+
+            const handleKeyDown = async (e) => {
+                // --- Password Input Mode ---
+                if (passwordMode) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const attemptPass = inputVal;
+                        setInputVal("");
+                        await simulateDelay(600);
+                        if (attemptPass === pendingAuth.correctPass) {
+                            const { ip, user: targetUser } = pendingAuth;
+                            setConnectedIp(ip); setUser(targetUser);
+                            setHost(VIRTUAL_NETWORK[ip].hostname);
+                            setCwd(ip === "192.168.1.35" ? "C:\\Users\\Administrator" : "/root");
+                            addToHistory('success', `Access Granted. Welcome to ${VIRTUAL_NETWORK[ip].os}`);
+                        } else {
+                            addToHistory('error', `Permission denied.`);
+                        }
+                        setPasswordMode(false); setPendingAuth(null); setIsProcessing(false);
+                    }
+                    return;
+                }
+
+                // --- Command History Navigation ---
+                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (cmdHistory.length === 0) return;
+                    
+                    let newIndex = historyIndex;
+                    if (e.key === 'ArrowUp') {
+                        // Move back in history (older commands)
+                        newIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
+                    } else {
+                        // Move forward in history (newer commands)
+                        newIndex = Math.max(historyIndex - 1, -1);
+                    }
+                    
+                    setHistoryIndex(newIndex);
+                    // If index is -1, show empty string (current buffer), otherwise show history item
+                    // cmdHistory is stored as [oldest, ..., newest]
+                    // We map historyIndex 0 to newest item (length-1), index 1 to second newest...
+                    setInputVal(newIndex === -1 ? "" : cmdHistory[cmdHistory.length - 1 - newIndex]);
+                    return;
+                }
+
+                // --- Command Execution ---
+                if (e.key === 'Enter') {
+                    const rawCmd = inputVal.trim();
+                    if (!rawCmd) {
+                        addToHistory('input', getPromptLabel()); setInputVal(""); return;
+                    }
+                    
+                    // Add to history if not same as last command
+                    setCmdHistory(prev => {
+                        if (prev.length === 0 || prev[prev.length - 1] !== rawCmd) {
+                            return [...prev, rawCmd];
+                        }
+                        return prev;
+                    });
+                    
+                    // Reset history index
+                    setHistoryIndex(-1);
+                    
+                    setInputVal("");
+                    addToHistory('input', `${getPromptLabel()} ${rawCmd}`);
+                    setIsProcessing(true);
+
+                    try {
+                        if (consoleMode === 'msf') await processMsfCommand(rawCmd);
+                        else if (consoleMode === 'meterpreter') await processMeterpreterCommand(rawCmd);
+                        else await processBashCommand(rawCmd);
+                    } catch (err) {
+                        addToHistory('error', `Error: ${err.message}`);
+                    }
+                    setIsProcessing(false);
+                }
+            };
+
+            // --- BASH Commands ---
+            const processBashCommand = async (rawCmd) => {
+                const parts = rawCmd.split(/\s+/);
+                const cmd = parts[0].toLowerCase();
+                const args = parts.slice(1);
+
+                switch (cmd) {
+                    case 'help':
+                        addToHistory('output', "Available commands:");
+                        COMMANDS_HELP.bash.forEach(h => addToHistory('output', `  ${h.cmd.padEnd(30)} : ${h.desc}`));
+                        break;
+                    case 'jump':
+                        if (!args[0]) { addToHistory('error', "Usage: jump <level>"); break; }
+                        const lvl = parseInt(args[0]);
+                        if (lvl >= 2 && lvl <= 7) {
+                             if(lvl>1) setLevel1Cleared(true);
+                             if(lvl>2) setLevel2Cleared(true);
+                             if(lvl>3) setLevel3Cleared(true);
+                             if(lvl>4) setLevel4Cleared(true);
+                             if(lvl>5) setLevel5Cleared(true);
+                             if(lvl>6) setLevel6Cleared(true);
+                             const ips = [null, "192.168.1.20", "192.168.1.35", "192.168.1.50", "192.168.1.65", "192.168.1.80", "192.168.1.95", "192.168.1.110"];
+                             startLevel(lvl, ips[lvl]);
+                        } else {
+                            addToHistory('error', "Invalid level (2-7).");
+                        }
+                        break;
+                    case 'clear': setHistory([]); break;
+                    case 'ls': 
+                        const files = getFiles();
+                        addToHistory('output', Object.keys(files).join("  ") || "(empty)");
+                        break;
+                    case 'cat':
+                        if (args.length === 0) { addToHistory('error', "Usage: cat <filename>"); break; }
+                        const targetFiles = getFiles();
+                        if (targetFiles[args[0]]) {
+                            addToHistory('output', targetFiles[args[0]]);
+                            if (level === 1 && args[0] === 'secret_config.txt') handleLevel1Clear();
+                            if (level === 3 && args[0] === 'flag.txt') handleLevel3Clear();
+                            if (level === 4 && args[0] === 'database.xml') handleLevel4Clear();
+                            if (level === 5 && args[0] === 'secret_token') handleLevel5Clear();
+                            if (level === 6 && args[0] === 'settings.php') handleLevel6Clear();
+                            if (level === 7 && args[0] === 'env.properties') handleLevel7Clear();
+                        } else {
+                            addToHistory('error', "File not found.");
+                        }
+                        break;
+                    case 'level2': if (!level1Cleared) addToHistory('error', "Locked."); else startLevel(2, "192.168.1.35"); break;
+                    case 'level3': if (!level2Cleared) addToHistory('error', "Locked."); else startLevel(3, "192.168.1.50"); break;
+                    case 'level4': if (!level3Cleared) addToHistory('error', "Locked."); else startLevel(4, "192.168.1.65"); break;
+                    case 'level5': if (!level4Cleared) addToHistory('error', "Locked."); else startLevel(5, "192.168.1.80"); break;
+                    case 'level6': if (!level5Cleared) addToHistory('error', "Locked."); else startLevel(6, "192.168.1.95"); break;
+                    case 'level7': if (!level6Cleared) addToHistory('error', "Locked."); else startLevel(7, "192.168.1.110"); break;
+                    
+                    case 'nmap':
+                        if (!args[0] || args[0].startsWith('-')) { addToHistory('error', "Usage: nmap <ip>"); break; }
+                        const targetIp = args.find(a => !a.startsWith('-'));
+                        addToHistory('output', `Scanning ${targetIp}...`);
+                        await simulateDelay(1500);
+                        if (VIRTUAL_NETWORK[targetIp]) {
+                            const t = VIRTUAL_NETWORK[targetIp];
+                            addToHistory('output', `Host is up. OS: ${t.os}`);
+                            addToHistory('output', "PORT     STATE SERVICE       VERSION");
+                            t.ports.forEach(p => {
+                                addToHistory('success', `${String(p.port).padEnd(6)}/tcp ${p.state.padEnd(5)} ${p.service.padEnd(13)} ${p.version}`);
+                            });
+                        } else {
+                            addToHistory('error', "Host down.");
+                        }
+                        break;
+                    case 'hydra':
+                         if (level !== 1) { addToHistory('info', "Tip: Use 'msfconsole' for higher levels."); break; }
+                         if (args.length < 4 || !args.includes('ssh')) { addToHistory('error', "Usage: hydra <ip> ssh -l <user> -P <list>"); break; }
+                         addToHistory('success', "[22][ssh] login: admin   password: admin123");
+                         break;
+                    case 'ssh':
+                        if (!args[0]) { addToHistory('error', "Usage: ssh user@ip"); break; }
+                        const [sUser, sIp] = args[0].split('@');
+                        if (sIp === '192.168.1.20') {
+                            setPendingAuth({ user: sUser, ip: sIp, correctPass: "admin123" });
+                            setPasswordMode(true); setIsProcessing(false); return; 
+                        } else {
+                            addToHistory('error', "Connection timed out.");
+                        }
+                        break;
+                    case 'msfconsole':
+                        if (level < 2) {
+                            addToHistory('error', "Locked. Complete Level 1.");
+                        } else {
+                            addToHistory('system', "Starting Metasploit Framework...");
+                            await simulateDelay(800);
+                            setConsoleMode('msf');
+                            addToHistory('system', "msf6 > Ready.");
+                        }
+                        break;
+                    case 'whoami': addToHistory('output', user); break;
+                    case 'solution':
+                        if (level === 5) {
+                            addToHistory('output', "1. nmap 192.168.1.80 -> Port 80 Apache 2.2");
+                            addToHistory('output', "2. msfconsole -> search shellshock");
+                            addToHistory('output', "3. use exploit/multi/http/apache_mod_cgi_bash_env_exec");
+                            addToHistory('output', "4. set RHOSTS 192.168.1.80");
+                            addToHistory('output', "5. set TARGETURI /cgi-bin/vulnerable.cgi");
+                            addToHistory('output', "6. exploit -> cat secret_token");
+                        } else if (level === 6) {
+                            addToHistory('output', "1. nmap 192.168.1.95 -> Drupal");
+                            addToHistory('output', "2. msfconsole -> search drupal");
+                            addToHistory('output', "3. use exploit/unix/webapp/drupal_drupalgeddon2");
+                            addToHistory('output', "4. set RHOSTS 192.168.1.95");
+                            addToHistory('output', "5. exploit -> cat settings.php");
+                        } else if (level === 7) {
+                            addToHistory('output', "1. nmap 192.168.1.110 -> Port 8080");
+                            addToHistory('output', "2. msfconsole -> search log4shell");
+                            addToHistory('output', "3. use exploit/multi/http/log4shell_header_injection");
+                            addToHistory('output', "4. set RHOSTS 192.168.1.110");
+                            addToHistory('output', "5. set SRVHOST 192.168.1.110");
+                            addToHistory('output', "6. exploit -> cat env.properties");
+                        } else {
+                            addToHistory('info', "Check Hint button or use specific level.");
+                        }
+                        break;
+                    case 'exit': 
+                         if (connectedIp) {
+                             setConnectedIp(null); setUser("guest"); setHost("localhost");
+                             addToHistory('output', "Connection closed.");
+                         }
+                         break;
+                    default: addToHistory('error', `Command not found: ${cmd}`);
+                }
+            };
+
+            // --- METASPLOIT Commands ---
+            const processMsfCommand = async (rawCmd) => {
+                const parts = rawCmd.split(/\s+/);
+                const cmd = parts[0].toLowerCase();
+                const args = parts.slice(1);
+
+                switch (cmd) {
+                    case 'help': COMMANDS_HELP.msf.forEach(h => addToHistory('output', `  ${h.cmd.padEnd(20)} : ${h.desc}`)); break;
+                    case 'search':
+                        if (!args[0]) { addToHistory('error', "Usage: search <term>"); break; }
+                        addToHistory('output', "Matching Modules");
+                        addToHistory('output', "================");
+                        const term = args[0].toLowerCase();
+                        if (term.includes('eternal') || term.includes('ms17')) addToHistory('success', "exploit/windows/smb/ms17_010_eternalblue");
+                        else if (term.includes('vsftpd')) addToHistory('success', "exploit/unix/ftp/vsftpd_234_backdoor");
+                        else if (term.includes('struts')) addToHistory('success', "exploit/multi/http/struts2_content_type_ognl");
+                        else if (term.includes('shellshock') || term.includes('cgi')) addToHistory('success', "exploit/multi/http/apache_mod_cgi_bash_env_exec");
+                        else if (term.includes('drupal')) addToHistory('success', "exploit/unix/webapp/drupal_drupalgeddon2");
+                        else if (term.includes('log4j') || term.includes('log4shell')) addToHistory('success', "exploit/multi/http/log4shell_header_injection");
+                        else addToHistory('info', "No results found.");
+                        break;
+                    case 'use':
+                        if (!args[0]) { addToHistory('error', "Usage: use <module>"); break; }
+                        const mod = args[0];
+                        let shortName = "";
+                        if (mod.includes('eternalblue')) { setMsfModule('exploit/windows/smb/ms17_010_eternalblue'); shortName = "ms17_010"; }
+                        else if (mod.includes('vsftpd')) { setMsfModule('exploit/unix/ftp/vsftpd_234_backdoor'); shortName = "vsftpd"; }
+                        else if (mod.includes('struts')) { setMsfModule('exploit/multi/http/struts2_content_type_ognl'); shortName = "struts2"; }
+                        else if (mod.includes('shellshock') || mod.includes('cgi')) { setMsfModule('exploit/multi/http/apache_mod_cgi_bash_env_exec'); shortName = "shellshock"; }
+                        else if (mod.includes('drupal')) { setMsfModule('exploit/unix/webapp/drupal_drupalgeddon2'); shortName = "drupalgeddon2"; }
+                        else if (mod.includes('log4shell')) { setMsfModule('exploit/multi/http/log4shell_header_injection'); shortName = "log4shell"; }
+                        else { addToHistory('error', "Module not found."); break; }
+                        
+                        setMsfOptions({ RHOSTS: "" });
+                        addToHistory('msf-prompt', `msf6 exploit(${shortName}) > configured`);
+                        break;
+                    case 'set':
+                        if (!msfModule) { addToHistory('error', "No module."); break; }
+                        if (args.length < 2) { addToHistory('error', "Usage: set <OPT> <VAL>"); break; }
+                        const opt = args[0].toUpperCase();
+                        const val = args[1];
+                        setMsfOptions(prev => ({ ...prev, [opt]: val }));
+                        addToHistory('output', `${opt} => ${val}`);
+                        break;
+                    case 'show': addToHistory('info', "Usage: show options"); break;
+                    case 'exploit':
+                    case 'run':
+                        if (!msfModule) { addToHistory('error', "No module."); break; }
+                        const m = msfModule;
+                        const t = msfOptions.RHOSTS;
+                        
+                        // Validation Logic
+                        let success = false;
+                        let targetIP = "";
+                        let promptUser = "";
+                        let promptHost = "";
+                        let promptDir = "";
+
+                        if (m.includes('eternalblue') && t === '192.168.1.35') { success = true; targetIP=t; promptUser="SYSTEM"; promptHost="legacy-win-srv"; promptDir="C:\\Windows\\system32"; }
+                        else if (m.includes('vsftpd') && t === '192.168.1.50') { success = true; targetIP=t; promptUser="root"; promptHost="backup-ftp-srv"; promptDir="/root"; }
+                        else if (m.includes('struts') && t === '192.168.1.65') { success = true; targetIP=t; promptUser="tomcat"; promptHost="web-app-srv04"; promptDir="/opt/tomcat/webapps/ROOT"; }
+                        else if (m.includes('shellshock') && t === '192.168.1.80') { 
+                            if (!msfOptions.TARGETURI) { addToHistory('error', "Exploit failed: TARGETURI required (/cgi-bin/vulnerable.cgi)"); break; }
+                            success = true; targetIP=t; promptUser="www-data"; promptHost="legacy-cgi-srv"; promptDir="/usr/lib/cgi-bin";
+                        }
+                        else if (m.includes('drupal') && t === '192.168.1.95') { success = true; targetIP=t; promptUser="www-data"; promptHost="cms-server-v7"; promptDir="/var/www/html/sites/default"; }
+                        else if (m.includes('log4shell') && t === '192.168.1.110') {
+                            if (!msfOptions.SRVHOST) { addToHistory('error', "Exploit failed: SRVHOST required for LDAP callback."); break; }
+                            success = true; targetIP=t; promptUser="app-user"; promptHost="enterprise-java-app"; promptDir="/app/logs";
+                        }
+
+                        if (success) {
+                            addToHistory('info', `[*] Started reverse TCP handler...`);
+                            addToHistory('info', `[*] Sending exploit to ${targetIP}...`);
+                            await simulateDelay(1500);
+                            addToHistory('success', `[+] Exploit success! Session 1 opened.`);
+                            setConsoleMode('meterpreter');
+                            setConnectedIp(targetIP);
+                            setUser(promptUser); setHost(promptHost); setCwd(promptDir);
+                        } else {
+                            addToHistory('error', "Exploit failed: Check RHOSTS or Options.");
+                        }
+                        break;
+                    case 'exit':
+                    case 'back': setConsoleMode('bash'); setMsfModule(null); break;
+                    default: addToHistory('error', `Unknown: ${cmd}`);
+                }
+            };
+
+            const processMeterpreterCommand = async (rawCmd) => {
+                const parts = rawCmd.split(/\s+/);
+                const cmd = parts[0].toLowerCase();
+                const args = parts.slice(1);
+                
+                switch (cmd) {
+                    case 'help': addToHistory('output', "Meterpreter: ls, cat, pwd, exit"); break;
+                    case 'ls': 
+                        const files = getFiles();
+                        addToHistory('output', Object.keys(files).join("\n"));
+                        break;
+                    case 'pwd': addToHistory('output', cwd); break;
+                    case 'cat':
+                        if (!args[0]) { addToHistory('error', "Usage: cat <file>"); break; }
+                        const filesObj = getFiles();
+                        if (filesObj[args[0]]) {
+                            addToHistory('output', filesObj[args[0]]);
+                            if (args[0] === 'confidential.docx') handleLevel2Clear();
+                            if (args[0] === 'flag.txt') handleLevel3Clear();
+                            if (args[0] === 'database.xml') handleLevel4Clear();
+                            if (args[0] === 'secret_token') handleLevel5Clear();
+                            if (args[0] === 'settings.php') handleLevel6Clear();
+                            if (args[0] === 'env.properties') handleLevel7Clear();
+                        } else {
+                            addToHistory('error', "File not found");
+                        }
+                        break;
+                    case 'exit':
+                    case 'background':
+                        addToHistory('info', "Backgrounding session...");
+                        setConsoleMode('msf');
+                        setConnectedIp(null);
+                        break;
+                    default: addToHistory('error', "Unknown command.");
+                }
+            };
+
+            const getPromptLabel = () => {
+                if (passwordMode) return `${pendingAuth?.user}@${pendingAuth?.ip}'s password:`;
+                if (consoleMode === 'meterpreter') return level >= 3 ? `shell >` : `meterpreter >`;
+                if (consoleMode === 'msf') {
+                    const modName = msfModule ? msfModule.split('/').pop() : '';
+                    return msfModule ? `msf6 exploit(${modName}) >` : `msf6 >`;
+                }
+                return `${user}@${host}:${cwd}$`;
+            };
+            
+            const getPromptColor = () => {
+                if (consoleMode === 'msf') return 'text-red-500 underline';
+                if (consoleMode === 'meterpreter') return 'text-blue-500 underline';
+                return 'text-green-400';
+            }
+
+            const getLineColor = (type) => {
+                switch(type) {
+                    case 'input': return 'text-white font-bold';
+                    case 'error': return 'text-red-500';
+                    case 'success': return 'text-green-400 font-bold';
+                    case 'info': return 'text-blue-400';
+                    case 'system': return 'text-gray-500';
+                    case 'msf-prompt': return 'text-red-400 underline';
+                    default: return 'text-gray-300';
+                }
+            };
+
+            return (
+                <div className="flex h-screen w-full bg-black text-xs md:text-sm relative">
+                    <div className="scanline"></div>
+                    <div className="crt-flicker"></div>
+
+                    {/* Sidebar */}
+                    <div className="w-80 bg-gray-900 border-r border-gray-800 flex flex-col hidden md:flex z-30 overflow-hidden">
+                        <div className="p-4 border-b border-gray-800">
+                            <h1 className="text-green-500 font-bold text-lg flex items-center gap-2">
+                                <Shield className="w-5 h-5" /> CyberSim v5
+                            </h1>
+                        </div>
+                        
+                        <div className="p-4 flex-1 overflow-y-auto space-y-4">
+                            {/* Render Levels 1-4 */}
+                            {[1,2,3,4].map(l => (
+                                <div key={l} className={`transition-all ${level !== l ? 'opacity-50 hover:opacity-100' : ''}`}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <h2 className="text-gray-400 text-xs font-bold uppercase">Level {l}</h2>
+                                        {[level1Cleared, level2Cleared, level3Cleared, level4Cleared][l-1] && <span className="text-green-500 text-xs">✔</span>}
+                                    </div>
+                                    <div className="bg-gray-800/50 p-2 rounded border border-gray-700 text-gray-300 relative">
+                                        <p className="text-xs">Target: <span className="text-white">192.168.1.{20 + (l-1)*15}</span></p>
+                                        <button onClick={() => toggleHint(l)} className="mt-2 text-[10px] flex items-center gap-1 text-yellow-500 hover:text-yellow-400 bg-black/30 px-2 py-1 rounded w-full justify-center"><Lightbulb className="w-3 h-3" /> Hint</button>
+                                        {activeHint === 1 && l === 1 && (
+                                            <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                                1. <code>nmap 192.168.1.20</code> でポートを確認。<br/>
+                                                2. 22番ポート(SSH)が開いているので、<code>hydra</code> でパスワード解析。<br/>
+                                                3. コマンド: <code>hydra 192.168.1.20 ssh -l admin -P rockyou.txt</code><br/>
+                                                4. 解析したパスワードで <code>ssh admin@192.168.1.20</code> してログイン。
+                                            </div>
+                                        )}
+                                        {activeHint === 2 && l === 2 && (
+                                            <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                                1. <code>nmap 192.168.1.35</code> でポート445(SMB)を確認。<br/>
+                                                2. Windowsの脆弱性 "EternalBlue" を狙う。<br/>
+                                                3. <code>msfconsole</code> を起動し、<code>search eternalblue</code>。<br/>
+                                                4. <code>use exploit/windows/smb/ms17_010_eternalblue</code>。<br/>
+                                                5. <code>set RHOSTS 192.168.1.35</code> してから <code>exploit</code>。
+                                            </div>
+                                        )}
+                                        {activeHint === 3 && l === 3 && (
+                                            <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                                1. <code>nmap 192.168.1.50</code> でポート21を確認。<br/>
+                                                2. バナー情報 "vsftpd 2.3.4" がバックドアの証拠。<br/>
+                                                3. <code>msfconsole</code> で <code>search vsftpd</code>。<br/>
+                                                4. <code>use exploit/unix/ftp/vsftpd_234_backdoor</code>。<br/>
+                                                5. <code>set RHOSTS 192.168.1.50</code> して <code>exploit</code>。
+                                            </div>
+                                        )}
+                                        {activeHint === 4 && l === 4 && (
+                                            <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                                1. <code>nmap 192.168.1.65</code> でポート8080(Struts 2)を確認。<br/>
+                                                2. <code>msfconsole</code> で <code>search struts</code>。<br/>
+                                                3. モジュール <code>exploit/multi/http/struts2_content_type_ognl</code> を選択。<br/>
+                                                4. <code>set RHOSTS 192.168.1.65</code> して <code>exploit</code>。
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* LEVEL 5 */}
+                            <div className={`transition-all ${level !== 5 ? 'opacity-50 hover:opacity-100' : ''} ${level < 5 ? 'pointer-events-none opacity-20' : ''}`}>
+                                <div className="flex justify-between items-center mb-1">
+                                    <h2 className="text-purple-400 text-xs font-bold uppercase">Level 5: Expert+</h2>
+                                    {level5Cleared && <span className="text-green-500 text-xs">✔</span>}
+                                </div>
+                                <div className="bg-gray-800/50 p-2 rounded border border-purple-900/50 text-gray-300">
+                                    <div className="flex items-start gap-2 mb-2"><Activity className="w-4 h-4 text-purple-500" /><span className="font-bold text-purple-500 text-xs">Shellshock</span></div>
+                                    <p className="text-xs">Target: <span className="text-white">192.168.1.80</span></p>
+                                    <button onClick={() => toggleHint(5)} className="mt-2 text-[10px] flex items-center gap-1 text-yellow-500 hover:text-yellow-400 bg-black/30 px-2 py-1 rounded w-full justify-center"><Lightbulb className="w-3 h-3" /> Hint</button>
+                                    {activeHint === 5 && (
+                                        <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                            1. <code>nmap 192.168.1.80</code> でApacheを確認。<br/>
+                                            2. 古いCGIは "Shellshock" 脆弱性があるかも。<code>msfconsole</code> で検索。<br/>
+                                            3. <code>use exploit/multi/http/apache_mod_cgi_bash_env_exec</code>。<br/>
+                                            4. ターゲットURIの設定が必須: <code>set TARGETURI /cgi-bin/vulnerable.cgi</code><br/>
+                                            5. <code>set RHOSTS 192.168.1.80</code> して <code>exploit</code>。
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* LEVEL 6 */}
+                            <div className={`transition-all ${level !== 6 ? 'opacity-50 hover:opacity-100' : ''} ${level < 6 ? 'pointer-events-none opacity-20' : ''}`}>
+                                <div className="flex justify-between items-center mb-1">
+                                    <h2 className="text-purple-400 text-xs font-bold uppercase">Level 6: Master</h2>
+                                    {level6Cleared && <span className="text-green-500 text-xs">✔</span>}
+                                </div>
+                                <div className="bg-gray-800/50 p-2 rounded border border-purple-900/50 text-gray-300">
+                                    <div className="flex items-start gap-2 mb-2"><Activity className="w-4 h-4 text-purple-500" /><span className="font-bold text-purple-500 text-xs">Drupalgeddon</span></div>
+                                    <p className="text-xs">Target: <span className="text-white">192.168.1.95</span></p>
+                                    <button onClick={() => toggleHint(6)} className="mt-2 text-[10px] flex items-center gap-1 text-yellow-500 hover:text-yellow-400 bg-black/30 px-2 py-1 rounded w-full justify-center"><Lightbulb className="w-3 h-3" /> Hint</button>
+                                    {activeHint === 6 && (
+                                        <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                            1. <code>nmap 192.168.1.95</code> でDrupal(CMS)を確認。<br/>
+                                            2. 有名な脆弱性 "Drupalgeddon2" を狙う。<br/>
+                                            3. <code>msfconsole</code> で <code>search drupal</code>。<br/>
+                                            4. <code>use exploit/unix/webapp/drupal_drupalgeddon2</code>。<br/>
+                                            5. <code>set RHOSTS 192.168.1.95</code> して <code>exploit</code>。
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* LEVEL 7 */}
+                            <div className={`transition-all ${level !== 7 ? 'opacity-50 hover:opacity-100' : ''} ${level < 7 ? 'pointer-events-none opacity-20' : ''}`}>
+                                <div className="flex justify-between items-center mb-1">
+                                    <h2 className="text-red-500 text-xs font-bold uppercase">Level 7: Grandmaster</h2>
+                                    {level7Cleared && <span className="text-green-500 text-xs">✔</span>}
+                                </div>
+                                <div className="bg-gray-800/50 p-2 rounded border border-red-900/50 text-gray-300">
+                                    <div className="flex items-start gap-2 mb-2"><Activity className="w-4 h-4 text-red-500" /><span className="font-bold text-red-500 text-xs">Log4Shell</span></div>
+                                    <p className="text-xs">Target: <span className="text-white">192.168.1.110</span></p>
+                                    <button onClick={() => toggleHint(7)} className="mt-2 text-[10px] flex items-center gap-1 text-yellow-500 hover:text-yellow-400 bg-black/30 px-2 py-1 rounded w-full justify-center"><Lightbulb className="w-3 h-3" /> Hint</button>
+                                    {activeHint === 7 && (
+                                        <div className="mt-2 text-[10px] text-gray-400 border-t border-gray-700 pt-1">
+                                            1. <code>nmap 192.168.1.110</code> でJavaアプリを確認。<br/>
+                                            2. "Log4Shell" 脆弱性を狙う。<code>search log4shell</code>。<br/>
+                                            3. <code>use exploit/multi/http/log4shell_header_injection</code>。<br/>
+                                            4. <code>set RHOSTS 192.168.1.110</code>。<br/>
+                                            5. コールバック用サーバー設定: <code>set SRVHOST 192.168.1.110</code><br/>
+                                            6. <code>exploit</code> で侵入成功。
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div 
+                        ref={containerRef}
+                        className="flex-1 flex flex-col bg-[#0d1117] relative z-10" 
+                        onClick={handleContainerClick}
+                    >
+                        <div className="h-8 bg-gray-800 flex items-center px-4 text-xs text-gray-400 justify-between select-none">
+                            <div className="flex gap-2">
+                                <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                            </div>
+                            <div>{consoleMode === 'msf' ? 'Metasploit Framework' : `${user}@${host}: ${cwd}`}</div>
+                            <div>{consoleMode}</div>
+                        </div>
+
+                        <div className="flex-1 p-4 overflow-y-auto font-mono text-sm md:text-base leading-relaxed">
+                            {history.map((line, i) => (
+                                <div 
+                                    key={i} 
+                                    className={`${getLineColor(line.type)} mb-1 whitespace-pre-wrap break-all hover:bg-gray-800/30 cursor-text`}
+                                    onContextMenu={(e) => handleContextMenu(e, line.content)}
+                                    title="Right-click to Copy"
+                                >
+                                    {line.type === 'input' ? '> ' : ''}{line.content}
+                                </div>
+                            ))}
+                            
+                            <div className="flex items-center mt-2">
+                                <span className={`${getPromptColor()} mr-2 whitespace-nowrap`}>{getPromptLabel()}</span>
+                                <div className="flex-1 relative">
+                                    <input
+                                        ref={inputRef}
+                                        type={passwordMode ? "password" : "text"}
+                                        value={inputVal}
+                                        onChange={(e) => setInputVal(e.target.value)}
+                                        onKeyDown={handleKeyDown}
+                                        disabled={isProcessing}
+                                        className="w-full bg-transparent outline-none border-none text-gray-100 caret-transparent font-mono"
+                                        autoComplete="off"
+                                        spellCheck="false"
+                                    />
+                                    {!passwordMode && (
+                                        <div className="absolute top-0 left-0 pointer-events-none flex">
+                                            <span className="text-gray-100 whitespace-pre">{inputVal}</span>
+                                            <span className={`w-2.5 h-5 bg-green-500 opacity-70 ${isProcessing ? 'hidden' : 'block animate-pulse'}`}></span>
+                                        </div>
+                                    )}
+                                     {passwordMode && (
+                                        <div className="absolute top-0 left-0 pointer-events-none flex">
+                                            <span className="text-gray-100 whitespace-pre">{"•".repeat(inputVal.length)}</span>
+                                            <span className={`w-2.5 h-5 bg-green-500 opacity-70 ${isProcessing ? 'hidden' : 'block animate-pulse'}`}></span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <div ref={bottomRef}></div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
 </body>
 </html>
