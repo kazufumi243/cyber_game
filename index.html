@@ -16,7 +16,6 @@
       throw new Error("Unauthorized");
     }
   }
-</script>    
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -86,6 +85,20 @@
             background: rgba(35, 134, 54, 0.5);
             color: white;
         }
+        
+        /* Custom Cursor Animation */
+        @keyframes cursor-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        .custom-cursor {
+            animation: cursor-blink 1s step-end infinite;
+        }
+        /* 入力中は点滅しない */
+        .typing .custom-cursor {
+            animation: none;
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -129,6 +142,13 @@
                 <path d="M9 18h6" />
                 <path d="M10 22h4" />
                 <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5 2 9h10c0-4 2-6 2-9a7 7 0 0 0-7-7z" />
+            </svg>
+        );
+
+        const Terminal = (props) => (
+            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
         );
 
@@ -305,6 +325,12 @@
             ]
         };
 
+        // Quick Commands List
+        const QUICK_COMMANDS = [
+            "ls", "cat ", "nmap ", "hydra ", "ssh ", "msfconsole", 
+            "search ", "use ", "set RHOSTS ", "exploit", "help", "clear"
+        ];
+
         const App = () => {
             // Game State
             const [level, setLevel] = useState(1); 
@@ -321,12 +347,13 @@
 
             // Terminal State
             const [history, setHistory] = useState([
-                { type: 'system', content: "CyberTerm OS [Version 4.2.0]" },
+                { type: 'system', content: "CyberTerm OS [Version 4.4.0]" },
                 { type: 'system', content: "(c) Security Training Simulator." },
                 { type: 'info', content: "Current Level: 1 (Beginner)" },
                 { type: 'info', content: "Type 'help' to see available commands." }
             ]);
             const [inputVal, setInputVal] = useState("");
+            const [cursorPos, setCursorPos] = useState(0); // カーソル位置を追加
             const [cwd, setCwd] = useState("/home/guest");
             const [user, setUser] = useState("guest");
             const [host, setHost] = useState("localhost");
@@ -354,30 +381,42 @@
                 bottomRef.current?.scrollIntoView({ behavior: "smooth" });
             }, [history]);
 
+            // ① 自動フォーカス機能
+            useEffect(() => {
+                if (!isProcessing) {
+                    const selection = window.getSelection();
+                    if (!selection || selection.toString().length === 0) {
+                        inputRef.current?.focus();
+                    }
+                }
+            }, [isProcessing]);
+
+            // カーソル位置の更新ハンドラ
+            const updateCursorPosition = (e) => {
+                if (e.target && e.target.selectionStart !== undefined) {
+                    setCursorPos(e.target.selectionStart);
+                }
+            };
+
             // Prevent focus stealing if text is selected
             const handleContainerClick = (e) => {
                 const selection = window.getSelection();
-                // If there is selected text, do NOT focus input, allow user to copy
                 if (selection && selection.toString().length > 0) {
                     return;
                 }
-                // Otherwise focus input
                 inputRef.current?.focus();
             };
             
             // Handle Context Menu (Right Click) for Auto Copy
             const handleContextMenu = (e, text) => {
                 e.preventDefault();
-                // Select the text
                 const selection = window.getSelection();
                 const range = document.createRange();
                 range.selectNodeContents(e.currentTarget);
                 selection.removeAllRanges();
                 selection.addRange(range);
                 
-                // Copy to clipboard
                 navigator.clipboard.writeText(text).then(() => {
-                    // Focus input so Ctrl+V works immediately
                     inputRef.current?.focus();
                 });
             };
@@ -392,6 +431,20 @@
 
             const toggleHint = (lvl) => {
                 setActiveHint(activeHint === lvl ? null : lvl);
+            };
+
+            // ③ クイックコマンドのハンドラー
+            const handleQuickCommand = (cmd) => {
+                setInputVal(cmd);
+                setCursorPos(cmd.length); // カーソルを末尾へ
+                inputRef.current?.focus();
+                // inputのvalue設定後にカーソル位置を更新するためにsetTimeoutを使用
+                setTimeout(() => {
+                    if (inputRef.current) {
+                        inputRef.current.selectionStart = cmd.length;
+                        inputRef.current.selectionEnd = cmd.length;
+                    }
+                }, 0);
             };
 
             // Clear Handlers
@@ -434,13 +487,21 @@
                 return INITIAL_FILE_SYSTEM.local.home.guest;
             };
 
+            // 入力ハンドリングの共通化
+            const handleChange = (e) => {
+                setInputVal(e.target.value);
+                setCursorPos(e.target.selectionStart);
+            };
+
             const handleKeyDown = async (e) => {
-                // --- Password Input Mode ---
+                updateCursorPosition(e); // キー入力ごとにカーソル位置更新
+
                 if (passwordMode) {
                     if (e.key === 'Enter') {
                         e.preventDefault();
                         const attemptPass = inputVal;
                         setInputVal("");
+                        setCursorPos(0);
                         await simulateDelay(600);
                         if (attemptPass === pendingAuth.correctPass) {
                             const { ip, user: targetUser } = pendingAuth;
@@ -456,47 +517,46 @@
                     return;
                 }
 
-                // --- Command History Navigation ---
                 if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                     e.preventDefault();
                     if (cmdHistory.length === 0) return;
-                    
                     let newIndex = historyIndex;
-                    if (e.key === 'ArrowUp') {
-                        // Move back in history (older commands)
-                        newIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
-                    } else {
-                        // Move forward in history (newer commands)
-                        newIndex = Math.max(historyIndex - 1, -1);
-                    }
-                    
+                    if (e.key === 'ArrowUp') newIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
+                    else newIndex = Math.max(historyIndex - 1, -1);
                     setHistoryIndex(newIndex);
-                    // If index is -1, show empty string (current buffer), otherwise show history item
-                    // cmdHistory is stored as [oldest, ..., newest]
-                    // We map historyIndex 0 to newest item (length-1), index 1 to second newest...
-                    setInputVal(newIndex === -1 ? "" : cmdHistory[cmdHistory.length - 1 - newIndex]);
+                    
+                    const nextVal = newIndex === -1 ? "" : cmdHistory[cmdHistory.length - 1 - newIndex];
+                    setInputVal(nextVal);
+                    // カーソルを末尾に
+                    setCursorPos(nextVal.length);
+                    // inputのカーソル位置も実際に移動させる（レンダリング後）
+                    setTimeout(() => {
+                        if (inputRef.current) {
+                            inputRef.current.selectionStart = nextVal.length;
+                            inputRef.current.selectionEnd = nextVal.length;
+                        }
+                    }, 0);
+                    return;
+                }
+                
+                // 左右キーの場合はデフォルトの動作を許可しつつカーソル位置を更新
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    setTimeout(() => updateCursorPosition({ target: inputRef.current }), 0);
                     return;
                 }
 
-                // --- Command Execution ---
                 if (e.key === 'Enter') {
                     const rawCmd = inputVal.trim();
                     if (!rawCmd) {
-                        addToHistory('input', getPromptLabel()); setInputVal(""); return;
+                        addToHistory('input', getPromptLabel()); setInputVal(""); setCursorPos(0); return;
                     }
-                    
-                    // Add to history if not same as last command
+                    setHistoryIndex(-1);
                     setCmdHistory(prev => {
-                        if (prev.length === 0 || prev[prev.length - 1] !== rawCmd) {
-                            return [...prev, rawCmd];
-                        }
+                        if (prev.length === 0 || prev[prev.length - 1] !== rawCmd) return [...prev, rawCmd];
                         return prev;
                     });
-                    
-                    // Reset history index
-                    setHistoryIndex(-1);
-                    
                     setInputVal("");
+                    setCursorPos(0);
                     addToHistory('input', `${getPromptLabel()} ${rawCmd}`);
                     setIsProcessing(true);
 
@@ -566,8 +626,9 @@
                     case 'level7': if (!level6Cleared) addToHistory('error', "Locked."); else startLevel(7, "192.168.1.110"); break;
                     
                     case 'nmap':
-                        if (!args[0] || args[0].startsWith('-')) { addToHistory('error', "Usage: nmap <ip>"); break; }
                         const targetIp = args.find(a => !a.startsWith('-'));
+                        if (!targetIp) { addToHistory('error', "Usage: nmap <ip> [options]"); break; }
+                        
                         addToHistory('output', `Scanning ${targetIp}...`);
                         await simulateDelay(1500);
                         if (VIRTUAL_NETWORK[targetIp]) {
@@ -583,7 +644,16 @@
                         break;
                     case 'hydra':
                          if (level !== 1) { addToHistory('info', "Tip: Use 'msfconsole' for higher levels."); break; }
-                         if (args.length < 4 || !args.includes('ssh')) { addToHistory('error', "Usage: hydra <ip> ssh -l <user> -P <list>"); break; }
+                         if (args.length < 2) { 
+                             addToHistory('error', "Usage: hydra <ip> ssh -l <user> -P <list>"); break; 
+                         }
+                         const hydraIp = args.find(a => !a.startsWith('-') && a !== 'ssh');
+                         const hasSsh = args.includes('ssh');
+                         
+                         if (!hydraIp || !hasSsh) {
+                             addToHistory('error', "Missing target IP or protocol (ssh)."); break;
+                         }
+                         
                          addToHistory('success', "[22][ssh] login: admin   password: admin123");
                          break;
                     case 'ssh':
@@ -796,13 +866,18 @@
                 }
             };
 
+            // Custom Cursor Logic
+            const leftPart = inputVal.slice(0, cursorPos);
+            const cursorChar = inputVal.slice(cursorPos, cursorPos + 1) || ' ';
+            const rightPart = inputVal.slice(cursorPos + 1);
+
             return (
                 <div className="flex h-screen w-full bg-black text-xs md:text-sm relative">
                     <div className="scanline"></div>
                     <div className="crt-flicker"></div>
 
-                    {/* Sidebar */}
-                    <div className="w-80 bg-gray-900 border-r border-gray-800 flex flex-col hidden md:flex z-30 overflow-hidden">
+                    {/* Sidebar - removed hidden to keep it visible */}
+                    <div className="w-80 bg-gray-900 border-r border-gray-800 flex flex-col z-30 overflow-hidden shrink-0">
                         <div className="p-4 border-b border-gray-800">
                             <h1 className="text-green-500 font-bold text-lg flex items-center gap-2">
                                 <Shield className="w-5 h-5" /> CyberSim v5
@@ -810,6 +885,24 @@
                         </div>
                         
                         <div className="p-4 flex-1 overflow-y-auto space-y-4">
+                            {/* ③ Quick Commands Section */}
+                            <div>
+                                <h2 className="text-blue-400 text-xs font-bold uppercase mb-2 flex items-center gap-1">
+                                    <Terminal className="w-3 h-3" /> Quick Commands
+                                </h2>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {QUICK_COMMANDS.map(cmd => (
+                                        <button 
+                                            key={cmd} 
+                                            onClick={() => handleQuickCommand(cmd)}
+                                            className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] py-1 px-2 rounded border border-gray-700 truncate text-left"
+                                        >
+                                            {cmd.trim()}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
                             {/* Render Levels 1-4 */}
                             {[1,2,3,4].map(l => (
                                 <div key={l} className={`transition-all ${level !== l ? 'opacity-50 hover:opacity-100' : ''}`}>
@@ -954,29 +1047,35 @@
                                 </div>
                             ))}
                             
-                            <div className="flex items-center mt-2">
+                            <div className="flex items-center mt-2 typing">
                                 <span className={`${getPromptColor()} mr-2 whitespace-nowrap`}>{getPromptLabel()}</span>
                                 <div className="flex-1 relative">
                                     <input
                                         ref={inputRef}
                                         type={passwordMode ? "password" : "text"}
                                         value={inputVal}
-                                        onChange={(e) => setInputVal(e.target.value)}
+                                        onChange={handleChange}
+                                        onSelect={updateCursorPosition}
+                                        onKeyUp={updateCursorPosition}
+                                        onClick={updateCursorPosition}
                                         onKeyDown={handleKeyDown}
                                         disabled={isProcessing}
-                                        className="w-full bg-transparent outline-none border-none text-gray-100 caret-transparent font-mono"
+                                        className="w-full h-full absolute inset-0 opacity-0 cursor-text"
                                         autoComplete="off"
                                         spellCheck="false"
                                     />
                                     {!passwordMode && (
-                                        <div className="absolute top-0 left-0 pointer-events-none flex">
-                                            <span className="text-gray-100 whitespace-pre">{inputVal}</span>
-                                            <span className={`w-2.5 h-5 bg-green-500 opacity-70 ${isProcessing ? 'hidden' : 'block animate-pulse'}`}></span>
+                                        <div className="pointer-events-none flex whitespace-pre">
+                                            <span className="text-gray-100">{leftPart}</span>
+                                            <span className={`bg-green-500 text-black ${isProcessing ? '' : 'custom-cursor'}`}>
+                                                {cursorChar}
+                                            </span>
+                                            <span className="text-gray-100">{rightPart}</span>
                                         </div>
                                     )}
                                      {passwordMode && (
-                                        <div className="absolute top-0 left-0 pointer-events-none flex">
-                                            <span className="text-gray-100 whitespace-pre">{"•".repeat(inputVal.length)}</span>
+                                        <div className="pointer-events-none flex">
+                                            <span className="text-gray-100">{"•".repeat(inputVal.length)}</span>
                                             <span className={`w-2.5 h-5 bg-green-500 opacity-70 ${isProcessing ? 'hidden' : 'block animate-pulse'}`}></span>
                                         </div>
                                     )}
