@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cyber Term: Penetration Simulator</title>
     
-    <!-- 認証用スクリプトを削除しました -->
+    <!-- 以前の認証用スクリプトは削除しました（React内で安全に実装するため） -->
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -318,7 +318,63 @@
             "search ", "use ", "set RHOSTS ", "exploit", "help", "clear"
         ];
 
-        const App = () => {
+        // --- Login Component ---
+        const LoginScreen = ({ onSuccess }) => {
+            const [val, setVal] = useState("");
+            const [err, setErr] = useState("");
+            const inputRef = useRef(null);
+
+            useEffect(() => {
+                inputRef.current?.focus();
+            }, []);
+
+            const check = (e) => {
+                if (e.key === 'Enter') {
+                    if (val === "303spu_co") {
+                        onSuccess();
+                    } else {
+                        setErr("ACCESS DENIED");
+                        setVal("");
+                    }
+                }
+            }
+            
+            return (
+                <div className="flex h-screen w-full bg-black text-green-500 font-mono relative overflow-hidden">
+                    <div className="scanline"></div>
+                    <div className="crt-flicker"></div>
+                    <div className="flex flex-col items-center justify-center w-full z-30 h-full">
+                        <div className="border border-green-500 p-8 rounded bg-gray-900/80 shadow-[0_0_15px_rgba(0,255,0,0.3)]">
+                            <h1 className="text-xl mb-6 font-bold tracking-widest text-center flex items-center justify-center gap-2">
+                                <Shield className="w-6 h-6" /> SYSTEM AUTHENTICATION
+                            </h1>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs text-gray-400 tracking-wider">ENTER PASSPHRASE</label>
+                                <div className="flex items-center gap-2 border-b border-green-500/50 pb-1">
+                                    <span className="text-green-500 animate-pulse">&gt;</span>
+                                    <input 
+                                        ref={inputRef}
+                                        type="password" 
+                                        className="bg-transparent outline-none text-green-500 w-64 placeholder-green-900"
+                                        placeholder="••••••••"
+                                        value={val}
+                                        onChange={(e) => setVal(e.target.value)}
+                                        onKeyDown={check}
+                                        autoFocus
+                                    />
+                                </div>
+                                <div className="h-6 mt-2">
+                                    {err && <div className="text-red-500 text-xs font-bold animate-pulse text-center">⚠ {err} ⚠</div>}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="absolute bottom-4 text-xs text-gray-600">Cyber Term v5.0 // Security Division</div>
+                    </div>
+                </div>
+            )
+        };
+
+        const Game = () => {
             // Game State
             const [level, setLevel] = useState(1); 
             const [level1Cleared, setLevel1Cleared] = useState(false);
@@ -1073,6 +1129,17 @@
                     </div>
                 </div>
             );
+        };
+
+        const App = () => {
+            const [isAuthed, setIsAuthed] = useState(sessionStorage.getItem("authed") === "1");
+
+            const handleSuccess = () => {
+                sessionStorage.setItem("authed", "1");
+                setIsAuthed(true);
+            };
+
+            return isAuthed ? <Game /> : <LoginScreen onSuccess={handleSuccess} />;
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
